@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.10", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: pip install anthropic
+
+    - name: Syntax check
+      run: python -m py_compile ghostwriter.py && echo "✅ Syntax OK"
+
+    - name: Test file scanner
+      run: |
+        python -c "
+        from ghostwriter import scan_project, build_file_dump
+        from pathlib import Path
+        files = scan_project(Path('.'))
+        assert len(files) > 0, 'Scanner found no files'
+        dump = build_file_dump(files)
+        assert len(dump) > 100
+        print(f'✅ Scanner: {len(files)} files, {len(dump)} chars')
+        "
+
+    - name: Test JSON parser
+      run: |
+        python -c "
+        from ghostwriter import parse_json
+        import json
+
+        # Plain JSON
+        r = parse_json('{\"findings\": [], \"ghost_summary\": \"ok\", \"pr_title\": \"t\", \"pr_body\": \"b\"}')
+        assert r['ghost_summary'] == 'ok'
+
+        # Fenced JSON
+        r2 = parse_json('\`\`\`json\n{\"findings\": [], \"ghost_summary\": \"ok2\", \"pr_title\": \"t\", \"pr_body\": \"b\"}\n\`\`\`')
+        assert r2['ghost_summary'] == 'ok2'
+
+        print('✅ JSON parser tests passed')
+        "
+
+    - name: Test apply_fixes dry run
+      run: |
+        python -c "
+        import tempfile, os
+        from pathlib import Path
+        from ghostwriter import apply_fixes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / 'test.py'
+            p.write_text('API_KEY = \"hardcoded_secret\"\nprint(API_KEY)\n')
+
+            findings = [{
+                'id': 'GW-001', 'file': 'test.py',
+                'original_code': 'API_KEY = \"hardcoded_secret\"',
+                'fixed_code': 'API_KEY = os.environ.get(\"API_KEY\")',
+            }]
+
+            # Dry run — should NOT change file
+            applied = apply_fixes(findings, Path(tmp), dry_run=True)
+            content = p.read_text()
+            assert 'hardcoded_secret' in content, 'Dry run should not modify file'
+            print('✅ Dry run test passed')
+
+            # Real run — SHOULD change file
+            applied = apply_fixes(findings, Path(tmp), dry_run=False)
+            content = p.read_text()
+            assert 'hardcoded_secret' not in content, 'Fix should have been applied'
+            assert 'os.environ' in content
+            print('✅ Fix application test passed')
+        "

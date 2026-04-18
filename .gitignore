@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+# Never commit API keys or reports
+.ghostwriter/
+ghostwriter_report_*.json
+.env
